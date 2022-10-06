@@ -1,0 +1,883 @@
+---
+title: "Transvection_QG_Analysis"
+author: "Ian Dworkin"
+date: "`r format(Sys.time(),'%d %b %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    number_sections: yes
+    keep_md: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+# Transvection at MEN, Quantitative Genetic Analyses
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(digits = 3)
+```
+
+## libraries
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(parallel)
+library(pbkrtest)
+library(glmmTMB)
+library(effects)
+library(car)
+library(MCMCglmm)
+library(ggplot2)
+library(ggbeeswarm)
+library(ggdist)
+library(broom)
+library(distributional)
+library(forcats)
+library(corrplot)
+library(emmeans)
+library(tidyr)
+library(DHARMa)
+```
+
+
+## Some functions we might need
+
+```{r}
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y, use = "pairwise.complete.obs"))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 1.1
+    text(0.5, 0.5, txt, cex = 2)
+}
+```
+
+## read data in
+
+```{r}
+raw_dat <- read.csv("../data/transvection_rawdata.csv", h = T)
+
+dim(raw_dat)
+system("wc -l ../data/transvection_rawdata.csv")
+```
+
+
+### Checks of data, etc
+
+```{r}
+head(raw_dat)
+tail(raw_dat)
+
+str(raw_dat)
+```
+
+Make Block, MenEx and DGRP factors
+
+```{r}
+raw_dat[,c(1,3,4)] <- lapply(raw_dat[,c(1,3,4)], as.factor)
+
+str(raw_dat)
+
+head(raw_dat)
+tail(raw_dat)
+```
+
+The variables MenRep1, MenRep2 and MenRep3 are measurement replicates (a single sample, prepared once, but three independent aliquots measured). So we need to put these into long format.
+
+I will create a sample dummy variable to use so that we can keep track of the technical replicates withing each unique biological sample.
+
+
+```{r}
+intermediate_dat <- raw_dat
+
+intermediate_dat$sample <- 1:nrow(intermediate_dat)
+
+intermediate_dat$sample <- as.factor(intermediate_dat$sample)
+
+str(intermediate_dat)
+```
+
+Reshape data into long format.
+
+```{r}
+long_data <- reshape(intermediate_dat,
+                     varying = list(names(intermediate_dat)[5:7]),
+                     direction = "long",
+                     ids = row.names(intermediate_dat),
+                     times = c("MenRep1", "MenRep2", "MenRep3"),
+                     timevar = "ReplicateMeasure",
+                     v.names = "Men_Activity")
+
+long_data <- long_data[order(long_data$sample),]
+
+head(long_data)
+
+head(intermediate_dat)
+
+tail(long_data)
+tail(intermediate_dat)
+
+dim(long_data)
+```
+
+We can remove any row with missing data now (it has no information)
+
+```{r}
+nrow(long_data)
+
+sum(is.na(long_data$Men_Activity)) # 4155 rows with NA
+
+long_data <- na.omit(long_data)
+nrow(long_data)
+```
+
+### Data checks
+
+Sample size etc.
+```{r}
+with(long_data, table(Block, MenEx))
+with(long_data, table(DGRP, MenEx))
+```
+
+
+```{r}
+ggplot(long_data, aes(y = Men_Activity, x = MenEx)) + geom_boxplot()
+
+ggplot(long_data, aes(y = Men_Activity, x = DGRP, color = MenEx)) + geom_boxplot()
+```
+
+```{r}
+ggplot(long_data, aes(x = Men_Activity)) + 
+  geom_density(aes(fill = MenEx), alpha = 0.45) 
+
+ggplot(long_data, aes(x = Men_Activity, y = MenEx, color = MenEx)) + 
+ geom_density_ridges(alpha = 0.5) 
+```
+
+## Model fitting
+
+### lmer model fitting
+
+This first model is treating enzyme activity as a single response, but allowing the influence of MenEx (3, 76, 86) to vary according to DGRP line. Alternative approaches would be to do an explicit multivariate mixed model or to do two seperate models (one for 76 and one for 86) using the activity levels of the Men 3 for the given DGRP be a covariate. However, with the current formulation, I can generate summary ratios or differences etc... Just need to know what is wanted.
+
+```{r}
+long_data$MenEx <- relevel(long_data$MenEx, "3" )
+
+long_data$Men_Activity_c <- scale(long_data$Men_Activity, 
+                                 center = TRUE, scale = FALSE) # just as a check. All is good so I am sticking with the uncentered response variable.
+
+mod1 <- lmer(Men_Activity ~ 1 + MenEx + (1|Block) 
+             + (0 + MenEx| DGRP) + (1|sample), 
+             data = long_data, 
+             control = lmerControl(optimizer = "bobyqa"))
+
+
+#fits_mod1 <- allFit(mod1) # to check that estimates are similar across different optimizers. This made me switch optimizers to bobyqa
+
+#summary(fits_mod1)
+#summary(fits_mod1)$llik
+#summary(fits_mod1)$fixef
+#summary(fits_mod1)$sdcor
+#summary(fits_mod1)$theta
+
+summary(mod1)
+
+mod1_re <- ranef(mod1)
+
+
+plot(emmeans(mod1, ~ MenEx), 
+     xlab = "MEN Activity",
+     ylab = "MEN allele",
+     horizontal = FALSE) +
+  theme_classic()
+
+pairs(emmeans(mod1, ~ MenEx))
+
+plot(pairs(emmeans(mod1, ~ MenEx)),
+     xlab = "Differences, MEN Activity",
+     ylab = "Contrasts among alleles",
+     horizontal = FALSE) + 
+  xlim(0, 5.1) +
+  geom_vline(xintercept = 0, lty = 2, alpha = 0.5) +
+  theme_classic()
+
+#equatiomatic::extract_eq(mod1) # to put in the paper
+```
+
+A few additional plots (of the same information, just alternative ways of visualizing the estimates and uncertainty)
+
+```{r}
+tidy_mod1_emm <- tidy(emmeans(mod1, ~ MenEx), 
+                      conf.int = TRUE, conf.level = 0.95)
+
+ggplot(tidy_mod1_emm, aes(y = MenEx)) +
+  stat_halfeye(
+    aes(xdist = dist_student_t(df = 8583, 
+                               mu = estimate, 
+                               sigma = std.error))) +
+  ylab("MEN allele") + xlab("MEN activity")
+
+
+mod1_contastRatio <- tidy(pairs(emmeans(mod1, ~ MenEx),
+                                conf.int = TRUE, 
+                                conf.level = 0.95))
+
+ggplot(mod1_contastRatio, aes(y = contrast)) +
+  stat_halfeye(
+    aes(xdist = dist_student_t(df = 8583, 
+                               mu = estimate, 
+                               sigma = std.error))) +
+   xlab("Differences, MEN activity") +
+   ylab("Contrasts among alleles") +
+  geom_vline(xintercept = 0, color = "red", 
+             alpha = 0.35, linetype = 2)
+```
+
+
+#### Checks for model fit
+
+```{r}
+plot(simulateResiduals(mod1))
+plotQQunif(simulateResiduals(mod1))
+
+
+plot(mod1)
+plot(mod1, resid(., scaled=TRUE) ~ fitted(.) | MenEx, abline = 0)
+plot(mod1, Block ~ resid(., scaled=TRUE))
+plot(mod1, DGRP ~ resid(., scaled=TRUE))
+
+lattice::qqmath(mod1) # more variation in tails...
+lattice::qqmath(ranef(mod1))
+
+plot(mod1, Men_Activity ~ fitted(.) | Block, abline = c(0,1))
+
+plot(mod1, Men_Activity ~ fitted(.) | DGRP, abline = c(0,1))
+
+
+lattice::dotplot(mod1_re, 
+                 scales = list(x = list(relation = 'free')))[["Block"]]
+
+lattice::dotplot(mod1_re, 
+                 scales = list(x = list(relation = 'free')))[["DGRP"]]
+
+# similar plots below, but using ggplot if you want to modify them for anything
+mod1F <- fortify.merMod(mod1)
+
+ggplot(mod1F, aes(.fitted,.resid)) + 
+  geom_point(colour="blue", alpha = 0.5, size = 0.5) +
+  facet_grid(.~MenEx) + 
+  geom_hline(yintercept=0)
+
+ggplot(mod1F, aes(Block,.resid)) + 
+  geom_boxplot() + coord_flip()
+
+ggplot(mod1F, aes(DGRP,.resid)) + 
+  geom_boxplot() + coord_flip()
+
+
+ggplot(mod1F, aes(.fitted, Men_Activity)) + 
+  geom_point(colour="blue") +
+  facet_wrap(~Block) + 
+  geom_abline(intercept = 0, slope = 1)
+```
+
+
+### model uncertainty and inferences
+
+Model profiling. This part is slow, so only uncomment and run it if you have the time.
+
+```{r}
+#likelihood profile based
+#prof_mod1 <- profile(mod1)
+#confint(prof_mod1, level = 0.95)
+
+# bootstrap based
+# change ncpus to number of cores you are willing to use
+#ci_boot_mod1 <- confint(mod1, level = 0.95,
+#                        method = "boot", boot.type = "perc", 
+#                        type = "semiparametric",
+#                        nsim = 1000, ncpus = 3)
+```
+
+
+Based on profiling and bootstrap (that order), 95% CI for the genetic correlations:
+
+    Men3-76 0.52-0.75 and 0.515 - 0.741
+    Men3-86 0.47-0.70 and 0.475 - 0.71
+    Men76-86 0.80-0.90 and 0.794 - 0.901
+
+So extremely similar for both approaches
+
+### compare to model assuming common DGRP (genetic) variance for all three Men alleles
+
+Use a parametric bootstrap to determine whether there is good evidence for a "significant" difference between a model with the random slopes (i.e. allowing DGRP effects to vary according to MenEx).
+
+This reduced model fits a model where variation across DGRP does not account for MenEx (so information for all three Men genotypes is used equally).
+
+I parallelized the parametric bootstrap. 
+
+If you have only a single core, set nc <- 1
+
+```{r}
+mod1_reduced <- lmer(Men_Activity ~ 1 + MenEx + (1|Block) 
+                     + (1|DGRP) + (1|sample), 
+                     data = long_data,
+                      control = lmerControl(optimizer = "bobyqa"))
+
+
+# Detect number of cores, subtract 1. 
+# Don't use if your machine only has a single core.
+
+nc <- detectCores() - 1
+cl <- makeCluster(rep("localhost", nc))
+
+# model comparison, parametric bootstrap
+pb_test_mod1 <- PBmodcomp(mod1, mod1_reduced, 
+                          nsim = 1000, cl = cl) # change back to 100, 500 or 1000 to run bootstrap
+
+summary(pb_test_mod1)
+
+#stopCluster(cl = NULL)
+```
+
+Highly significant any which way. I did 1000 simulations, and model fit is always better (in all 1000) for the more complex model. Also true for the asymptotic tests like LRT (LR=1875, df =5, p < 2e-16), among other.
+
+
+## Checking model fit with glmmTMB
+
+Check estimates using glmmTMB. Look pretty similar for both random and fixed effects
+
+```{r}
+mod1_tmb <- glmmTMB(Men_Activity ~ 1 + MenEx 
+                    + (1|Block) + ( 0 + MenEx| DGRP) + (1|sample), 
+                    data = long_data)
+
+summary(mod1_tmb)
+
+
+# can also allow residual variances to vary among alleles in glmmTMB
+mod1_tmb_varyingResid <- glmmTMB(Men_Activity ~ 1 + MenEx 
+                    + (1|Block) + ( 0 + MenEx| DGRP) + (1|sample), 
+                    dispformula = ~ 1 + MenEx,
+                    data = long_data)
+
+summary(mod1_tmb_varyingResid)
+```
+
+
+## Extracting useful things from the model
+
+Ellipse plots of the correlations.
+```{r}
+vcv_mod1 <- VarCorr(mod1)
+
+corrplot.mixed(cov2cor(vcv_mod1$DGRP),
+               upper="ellipse")
+```
+
+
+## checking random effect estimates for each genotype
+
+### Men3
+
+```{r}
+mod1_Men3 <- lmer(Men_Activity ~ 1 + (1|Block) + (1|DGRP) + (1|sample), 
+                  data = long_data,
+                  subset = MenEx == "3")
+
+summary(mod1_Men3)
+
+VarMat_Men3 <- as.data.frame(VarCorr(mod1_Men3))
+h2_Men3 <- VarMat_Men3[2,4]/sum(VarMat_Men3[1:2,4]) # Heritability
+
+print(h2_Men3, digits = 2)
+
+CVG_Men3 <- VarMat_Men3[2,5]/summary(mod1_Men3)$coef[1] # Coefficient of genetic variation
+
+print(CVG_Men3, digits = 2)
+```
+
+
+### Men76
+
+```{r}
+mod1_Men76 <- lmer(Men_Activity ~ 1 + (1|Block) + (1|DGRP) + (1|sample), 
+                  data = long_data,
+                  subset = MenEx == "76")
+
+summary(mod1_Men76)
+
+VarMat_Men76 <- as.data.frame(VarCorr(mod1_Men76))
+h2_Men76 <- VarMat_Men76[2,4]/sum(VarMat_Men76[1:2,4]) # Heritability
+
+print(h2_Men76, digits = 2)
+
+CVG_Men76 <- VarMat_Men76[2,5]/summary(mod1_Men76)$coef[1] # Coefficient of genetic variation
+
+print(CVG_Men76, digits = 2)
+```
+
+
+### Men86
+
+```{r}
+mod1_Men86 <- lmer(Men_Activity ~ 1 + (1|Block) + (1|DGRP) + (1|sample), 
+                  data = long_data,
+                  subset = MenEx == "86")
+
+summary(mod1_Men86)
+
+VarMat_Men86 <- as.data.frame(VarCorr(mod1_Men86))
+h2_Men86 <- VarMat_Men86[2,4]/sum(VarMat_Men86[1:2,4]) # Heritability
+
+print(h2_Men86, digits = 2)
+
+CVG_Men86 <- VarMat_Men86[2,5]/summary(mod1_Men86)$coef[1] # Coefficient of genetic variation
+
+print(CVG_Men86, digits = 2)
+```
+
+
+### conditional means
+check conditional means from full model and from the genotype specific models.
+
+
+```{r}
+DGRP_BLUP_Men3  <- coef(mod1_Men3)$DGRP
+DGRP_BLUP_Men3$DGRP <- row.names(DGRP_BLUP_Men3)
+
+head(DGRP_BLUP_Men3 )
+names(DGRP_BLUP_Men3)[1] <- "Men3_activity"
+
+DGRP_BLUP_Men76 <- coef(mod1_Men76)$DGRP
+DGRP_BLUP_Men76$DGRP <- row.names(DGRP_BLUP_Men76)
+names(DGRP_BLUP_Men76)[1] <- "Men76_activity"
+
+DGRP_BLUP_Men86 <- coef(mod1_Men86)$DGRP
+DGRP_BLUP_Men86$DGRP <- row.names(DGRP_BLUP_Men86)
+names(DGRP_BLUP_Men86)[1] <- "Men86_activity"
+
+crap <- merge(x = DGRP_BLUP_Men76, y = DGRP_BLUP_Men86, all = T)
+
+DGRP_blup_dat <- merge(crap,DGRP_BLUP_Men3, all = T )
+
+pairs(DGRP_blup_dat[,2:4], pch = 20, col = "red")
+cor(na.omit(DGRP_blup_dat[,2:4])) # approximately the same (different variance estimates influenced this)
+```
+
+
+## Publication quality plots
+
+
+```{r}
+dgrp_effects <- coef(mod1)$DGRP
+head(dgrp_effects)
+
+dgrp_effects2 <- data.frame(DGRP = rownames(dgrp_effects),
+                            MEN3 = dgrp_effects[,2] + dgrp_effects[,1],
+                            MEN76 = dgrp_effects[,2] + dgrp_effects[,3],
+                            MEN86 = dgrp_effects[,2] + dgrp_effects[,4])
+
+head(dgrp_effects2)
+str(dgrp_effects2)
+
+apply(dgrp_effects2[,2:4],2, mean) # agrees with emmeans
+
+names(dgrp_effects2)
+```
+
+
+### Potential scatteplots of conditional means
+
+```{r}
+pairs(dgrp_effects2[,2:4],
+      col = rgb(0, 0, 1, 0.5), pch = 20,
+      labels = c(expression(paste(italic(Men)^"3")), 
+                 expression(paste(italic(Men)^"76")),
+                 expression(paste(italic(Men)^"86"))),
+      lower.panel = panel.cor)
+
+pairs(dgrp_effects2[,2:4],
+      col = rgb(0, 0, 1, 0.5), pch = 20,
+      labels = c(expression(paste(italic(Men)^"3")), 
+                 expression(paste(italic(Men)^"76")),
+                 expression(paste(italic(Men)^"86"))),
+      lower.panel = NULL)
+```
+
+#### reaction norm plots
+
+```{r}
+men_data_for_rxn_norm <- gather(dgrp_effects2, 
+                               key = genotype, value = Activity, 
+                            MEN3, MEN76, MEN86,  -DGRP)
+
+men_data_for_rxn_norm$genotype <- as.factor(men_data_for_rxn_norm$genotype)
+
+men_data_for_rxn_norm$genotype <- relevel(men_data_for_rxn_norm$genotype, "MEN3")
+levels(men_data_for_rxn_norm$genotype)
+
+
+ggplot(men_data_for_rxn_norm, aes(y = Activity, x = genotype, 
+                              group = DGRP, color = DGRP)) +
+    geom_line(alpha = 0.5, lwd = 1, linejoin = "bevel") +
+    theme_classic() +
+  scale_x_discrete(labels = c(expression(paste(italic(MenEx)^"3")), 
+                 expression(paste(italic(MenEx)^"76")),
+                 expression(paste(italic(MenEx)^"86")))) +
+  labs(x = "", y = "Activity" ) +
+  theme(axis.text.x = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 15))+
+  theme(axis.title.y = element_text(size = 15))+
+  theme(legend.position = "none")
+```
+
+
+## MCMCglmm fit
+
+A slightly different model from lmer, allowing the residual variances to vary according to the MenEx alleles. This latter model fit was also checked above with the glmmTMB fit.
+
+Not much variation in residual variation by allele (a bit of a surpise). Probably should check posterior distributions of CV by allele.
+
+Does not change the results very much compared to the lme4, where the residual variance is shared across alleles.
+
+I am doing a large number of iterations because the effective sampling of the random effects is lower than I would like. 
+
+
+**WARNING** you may wish to lower nitt to a much smaller number for a test (20K). I needed this large number for the random effects. It was run at 200K. 
+
+```{r}
+mod1_MCMCglmm <- MCMCglmm(fixed = Men_Activity ~ 1 + MenEx,
+                          random = ~Block + idh(MenEx):sample + us(MenEx):DGRP,
+                          rcov = ~idh(MenEx):units,
+                          data = long_data, pr = TRUE,
+                          nitt = 200000, burnin = 20000, thin = 5)
+
+summary(mod1_MCMCglmm)
+
+s <- summary(mod1_MCMCglmm$VCV)$statistics[,"Mean"]  # extracting posteriors from the variances and covariances
+s <- s[5:13] # extracting the variances and covariances
+
+G_mat <- matrix(s, nrow = 3, ncol = 3, byrow = T)
+G_mat  # genetic variance covariance matrix
+
+G_cor <- cov2cor(G_mat) # genetic correlation matrix
+G_cor
+```
+
+
+
+Let's get the HPDintervals for the genetic correlations
+```{r}
+Gcor_12 <- mod1_MCMCglmm$VCV[,6]/sqrt(mod1_MCMCglmm$VCV[,5] * mod1_MCMCglmm$VCV[,9])
+mean(Gcor_12)
+HPDinterval(Gcor_12)
+
+
+Gcor_13 <- mod1_MCMCglmm$VCV[,7]/sqrt(mod1_MCMCglmm$VCV[,5] * mod1_MCMCglmm$VCV[,13])
+mean(Gcor_13)
+HPDinterval(Gcor_13)
+
+
+Gcor_23 <- mod1_MCMCglmm$VCV[,10]/sqrt(mod1_MCMCglmm$VCV[,9] * mod1_MCMCglmm$VCV[,13])
+mean(Gcor_23)
+HPDinterval(Gcor_23)
+```
+
+
+### CV of residuals
+Let's compute the coefficient of variation for the residuals for each allele
+
+Please note that because of the experimental design "sample" not "units" is the appropriate level of biological variation for this.
+
+First a quick check
+```{r}
+CV_Men3_approx <- sqrt(1.389)/14.17
+CV_Men76_approx <- sqrt(1.157)/(14.17 - 3.78)
+CV_Men86_approx <- sqrt(0.695)/(14.17 - 4.67)
+```
+
+
+Now for real
+
+```{r}
+posterior_MenEx3_residual_CV <- sqrt(mod1_MCMCglmm$VCV[,2])/mod1_MCMCglmm$Sol[,1]
+mean(posterior_MenEx3_residual_CV )
+HPDinterval(posterior_MenEx3_residual_CV )
+
+
+posterior_MenEx76_residual_CV <- sqrt(mod1_MCMCglmm$VCV[,3])/(mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,2])
+
+mean(posterior_MenEx76_residual_CV)
+HPDinterval(posterior_MenEx76_residual_CV)
+
+
+posterior_MenEx86_residual_CV <- sqrt(mod1_MCMCglmm$VCV[,4])/(mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,3])
+
+mean(posterior_MenEx86_residual_CV)
+HPDinterval(posterior_MenEx86_residual_CV)
+```
+
+
+### CVG and H2 calculations
+
+quick and dirty based on posterior means.
+```{r}
+summary(mod1_MCMCglmm)
+
+H2_men3_quick <- 6.68/(6.68 + 1.3895)
+H2_men76_quick <- 6.385/(6.385 + 1.1559)
+H2_men86_quick <- 5.733/(5.733 + 0.6954)
+
+CVG_men3_quick <- sqrt(6.68)/14.17
+CVG_men76_quick <- sqrt(6.385)/(14.17 - 3.78)
+CVG_men86_quick <- sqrt(5.733)/(14.17 - 4.67)
+```
+
+
+
+### Now the H2 and CVG based on the entire posterior
+
+
+```{r}
+posterior_MenEx3_H2 <- (mod1_MCMCglmm$VCV[,5])/(mod1_MCMCglmm$VCV[,5] + mod1_MCMCglmm$VCV[,2] )
+mean(posterior_MenEx3_H2)
+HPDinterval(posterior_MenEx3_H2)
+
+
+posterior_MenEx3_CVG <- sqrt(mod1_MCMCglmm$VCV[,5])/mod1_MCMCglmm$Sol[,1]
+mean(posterior_MenEx3_CVG )
+HPDinterval(posterior_MenEx3_CVG)
+
+
+posterior_MenEx76_H2 <- (mod1_MCMCglmm$VCV[,9])/(mod1_MCMCglmm$VCV[,9] + mod1_MCMCglmm$VCV[,3] )
+mean(posterior_MenEx76_H2)
+HPDinterval(posterior_MenEx76_H2)
+
+posterior_MenEx76_CVG <- sqrt(mod1_MCMCglmm$VCV[,9])/(mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,2])
+mean(posterior_MenEx76_CVG)
+HPDinterval(posterior_MenEx76_CVG)
+
+posterior_MenEx86_H2 <- (mod1_MCMCglmm$VCV[,13])/(mod1_MCMCglmm$VCV[,13] + mod1_MCMCglmm$VCV[,4] )
+mean(posterior_MenEx86_H2)
+HPDinterval(posterior_MenEx86_H2)
+
+
+posterior_MenEx86_CVG <- sqrt(mod1_MCMCglmm$VCV[,13])/(mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,3])
+mean(posterior_MenEx86_CVG)
+HPDinterval(posterior_MenEx86_CVG)
+```
+
+
+We can use these to generate posterior distributions of the ratios of the random effects for the DGRPs across alleles (like TJM wants for the figure)
+
+```{r}
+# note there is one DGRP line, (730) that are not present for all alleles. So remove this.
+with(long_data, 
+     table(MenEx, DGRP))
+
+# random effects we want are here
+colnames(mod1_MCMCglmm$Sol)[4298:4747]
+
+#Men3
+colnames(mod1_MCMCglmm$Sol)[4299:4447]
+
+#Men76
+colnames(mod1_MCMCglmm$Sol)[4448:4597]
+
+# Men86
+colnames(mod1_MCMCglmm$Sol)[4598:4747]
+
+# fixed effects are here (to add back on)
+colnames(mod1_MCMCglmm$Sol)[1:3]
+
+
+# Men 3 effects
+Men3_ranef <- mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,4298:4447]
+dim(Men3_ranef)
+
+# Men 76 effects
+Men76_ranef <- mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,2] + mod1_MCMCglmm$Sol[,4448:4597]
+dim(Men76_ranef)
+
+
+# Men 86 effects
+Men86_ranef <- mod1_MCMCglmm$Sol[,1] + mod1_MCMCglmm$Sol[,3] + mod1_MCMCglmm$Sol[,4598:4747]
+dim(Men3_ranef)
+
+# summaries for conditional means for each MenEx allele
+ranef_3_HPD <- HPDinterval(Men3_ranef)
+ranef_3_PostMean <- apply(Men3_ranef , 2, mean)
+
+ranef_76_HPD <- HPDinterval(Men76_ranef)
+ranef_76_PostMean <- apply(Men76_ranef , 2, mean)
+
+ranef_86_HPD <- HPDinterval(Men86_ranef)
+ranef_86_PostMean <- apply(Men86_ranef , 2, mean)
+
+dat_MenEx_ConditionalMeans <- data.frame(MenEx3 = ranef_3_PostMean,
+                                         MenEx76 = ranef_76_PostMean,
+                                         MenEx86 = ranef_86_PostMean)
+
+# cor(dat_MenEx_ConditionalMeans)
+
+write.csv(dat_MenEx_ConditionalMeans , "../misc/MenEx_DGRP_conditionalMeans.csv")
+
+
+# Men76/3 ratio
+ranef_76_3 <- Men76_ranef/Men3_ranef
+dim(ranef_76_3)
+
+ranef_76_3_HPD <- HPDinterval(ranef_76_3)
+ranef_76_3_PostMean <- apply(ranef_76_3 , 2, mean)
+
+head(ranef_76_3_HPD)
+head(ranef_76_3_PostMean)
+
+dat_76_3 <- data.frame(PosteriorMean = ranef_76_3_PostMean,
+                       PosteriorL = ranef_76_3_HPD[,1],
+                       PosteriorU = ranef_76_3_HPD[,2])
+
+write.csv(dat_76_3, "../misc/Men_76_ratio_post.csv")
+head(dat_76_3)
+
+# Men86/3 ratio
+ranef_86_3 <- Men86_ranef/Men3_ranef
+dim(ranef_86_3)
+
+ranef_86_3_HPD <- HPDinterval(ranef_86_3)
+ranef_86_3_PostMean <- apply(ranef_86_3 , 2, mean)
+head(ranef_86_3_HPD)
+head(ranef_86_3_PostMean)
+
+dat_86_3 <- data.frame(PosteriorMean = ranef_86_3_PostMean,
+                       PosteriorL = ranef_86_3_HPD[,1],
+                       PosteriorU = ranef_86_3_HPD[,2])
+
+write.csv(dat_86_3, "../misc/Men_86_ratio_post.csv")
+```
+
+
+Some more plots based on the conditional means from the MCMCglmm model fit.
+
+```{r}
+pairs(dat_MenEx_ConditionalMeans[,1:3],
+      col = rgb(0,0,1, 0.5), pch = 20, cex = 1.5,
+      labels = c(expression(paste(italic(MenEx)^"3")), 
+                 expression(paste(italic(MenEx)^"76")),
+                 expression(paste(italic(MenEx)^"86"))),
+      lower.panel = NULL)
+
+pairs(dat_MenEx_ConditionalMeans[,1:3],
+      col = rgb(0,0,1, 0.5), pch = 20, cex = 1.5,
+      labels = c(expression(paste(italic(MenEx)^"3")), 
+                 expression(paste(italic(MenEx)^"76")),
+                 expression(paste(italic(MenEx)^"86"))),
+      lower.panel = panel.cor)
+```
+
+
+```{r}
+labs_temp <- rownames(dat_MenEx_ConditionalMeans)
+
+labs_temp2 <- substr(labs_temp, 
+                     start = 8,
+                     stop = 1000000L)
+
+dat_MenEx_ConditionalMeans$DGRP <- labs_temp2
+
+men_data_for_rxn_norm <- gather(dat_MenEx_ConditionalMeans, 
+                               key = genotype, value = Activity, 
+                            MenEx3, MenEx76, MenEx86,  -DGRP)
+
+men_data_for_rxn_norm$genotype <- as.factor(men_data_for_rxn_norm$genotype)
+
+men_data_for_rxn_norm$genotype <- relevel(men_data_for_rxn_norm$genotype, "MenEx3")
+levels(men_data_for_rxn_norm$genotype)
+
+
+##the ggplot version 
+ggplot(men_data_for_rxn_norm, aes(y = Activity, x = genotype, 
+                              group = DGRP, color = DGRP)) +
+    geom_line(alpha = 0.5, lwd = 0.8, linejoin = "bevel") +
+    theme_classic() +
+  scale_x_discrete(labels = c(expression(paste(italic(MenEx)^"3")), 
+                 expression(paste(italic(MenEx)^"76")),
+                 expression(paste(italic(MenEx)^"86"))),
+                 expand = c(0.02,0.15)) +
+  labs(x = "", y = "Men Activity" ) +
+  theme(axis.text.x = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 15))+
+  theme(axis.title.y = element_text(size = 15))+
+  theme(legend.position = "none")
+```
+
+
+Plots of transvection ratio for ease of interpretation
+
+```{r}
+head(dat_76_3)
+
+dat_76_3b <- dat_76_3[order(dat_76_3$PosteriorMean),]
+
+ggplot(dat_76_3b, aes(y = PosteriorMean, x = as.factor(PosteriorMean))) +
+  geom_point(color = "red", alpha = 0.6) + 
+  geom_linerange(aes(ymin = PosteriorL, ymax = PosteriorU),
+                 color = "red", alpha = 0.25) +
+  ylim(0.20, 1.15) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", alpha = 0.4 ) +
+  labs(x = "DGRP", y = "Men Transvection ratio" ) +
+   theme_classic() +
+    theme(axis.text.x=element_blank())
+
+dat_86_3b <- dat_86_3[order(dat_86_3$PosteriorMean),]
+
+ggplot(dat_86_3b, aes(y = PosteriorMean, x = as.factor(PosteriorMean))) +
+  geom_point(color = "blue", alpha = 0.6) + 
+  geom_linerange(aes(ymin = PosteriorL, ymax = PosteriorU),
+                 color = "blue", alpha = 0.25) +
+  ylim(0.20, 1.15) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", alpha = 0.4 ) +
+  labs(x = "DGRP", y = "Men Transvection ratio" ) +
+   theme_classic() +
+    theme(axis.text.x=element_blank())
+```
+
+
+Both together?
+
+```{r}
+dat_76_3$genotype <- "MenEx76"
+
+dat_86_3$genotype <- "MenEx86"
+
+dat_ratios_combined <- rbind(dat_76_3, dat_86_3)
+dat_ratios_combined$genotype <- as.factor(dat_ratios_combined$genotype)
+dat_ratios_combined$dummy <- c(dat_76_3$PosteriorMean, dat_76_3$PosteriorMean) # dummy variable
+dat_ratios_combined <- dat_ratios_combined[order(dat_ratios_combined$dummy),]
+
+dim(dat_ratios_combined)
+
+head(dat_ratios_combined)
+str(dat_ratios_combined)
+
+ggplot(dat_ratios_combined, aes(y = PosteriorMean, x = as.factor(dummy), color = genotype, shape = genotype)) +
+  geom_point(alpha = 0.5) + 
+  geom_linerange(aes(ymin = PosteriorL, ymax = PosteriorU),
+                  alpha = 0.25) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", alpha = 0.4) +
+  labs(x = "DGRP", y = "Men Transvection ratio" ) +
+   theme_classic() +
+    theme(axis.text.x = element_blank(), legend.position = "bottom")
+```
+
+
+```{r}
+sessionInfo()
+```
+
