@@ -14,13 +14,14 @@ Authors: Teresa Z. Rzezniczak, Mark T. Rzezniczak, Bruce H. Reed, Ian Dworkin, T
 
 `pheno_men86.txt` contains the conditional means for MEN activity for each DGRP line in the Men86 dataset. Generated from the mixed model analysis described below.
 
-`covar_mengwas.txt` contains covariates for both the Men76 and Men86 datasets and was used in the GWAS for both datasets.  In this file, missing data points are represented by “-9”
-•	Wolbachia – Wolbachia presence/absence is indicated using 1 and 2, respectively.  
-•	MEN_SNP1 indicates which Men nonsynonymous SNP at position is present in each DGRP line
-•	MEN_SNP2 indicated which Men nonsynonymous SNP at position is present in each DGRP line
-•	MenEx3 is the conditional mean of each DGRP line when crossed to MenEx3 line
-•	Inversion PC1-Inversion PC5: The top 5 principal components when PCA analysis was run using annotated inversions in the DGRP
-•	EigVal1-Eigval5 – The top 5 principal components for PCA analysis of population structure
+`covar_mengwas.txt` contains covariates for both the Men76 and Men86 datasets and was used in the GWAS for both datasets:
+-  In this file, missing data points are represented by “-9”
+- Wolbachia – Wolbachia presence/absence is indicated using 1 and 2, respectively.  
+- MEN_SNP1 indicates which Men nonsynonymous SNP at position is present in each DGRP line
+- MEN_SNP2 indicated which Men nonsynonymous SNP at position is present in each DGRP line
+- MenEx3 is the conditional mean of each DGRP line when crossed to MenEx3 line
+- Inversion PC1-Inversion PC5: The top 5 principal components when PCA analysis was run using annotated inversions in the DGRP
+- EigVal1-Eigval5 – The top 5 principal components for PCA analysis of population structure
 
 
 ## analysis
