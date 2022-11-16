@@ -89,7 +89,7 @@ tail(raw_dat)
 
 The variables MenRep1, MenRep2 and MenRep3 are measurement replicates (a single sample, prepared once, but three independent aliquots measured). So we need to put these into long format.
 
-I will create a sample dummy variable to use so that we can keep track of the technical replicates withing each unique biological sample.
+I will create a sample dummy variable to use so that we can keep track of the technical replicates withing each unique biological sample (i.e. an individual fly).
 
 
 ```{r}
@@ -160,6 +160,14 @@ ggplot(long_data, aes(x = Men_Activity, y = MenEx, color = MenEx)) +
 ```
 
 ## Model fitting
+
+
+**NOTE** The main mixed model I used for the analysis for the paper begins on line 543. 
+
+The first sets of models using lmer and glmmTMB had some limitations (more lmer really). However if you run through the code for all, you will see the estimates are all in line with one another.
+
+Also note that in addition to the MCMC for the MCMCglmm, I use a parametric bootstrap for the likelihood based estimates. So if you are just doing a quick check, make sure to set iterations to a lower number or run the script and go to lunch, and then look at it when you come back.
+
 
 ### lmer model fitting
 
@@ -540,16 +548,19 @@ ggplot(men_data_for_rxn_norm, aes(y = Activity, x = genotype,
 
 ## MCMCglmm fit
 
+This was the fit used throughout much of the paper. Very similar results to the likelihood based approaches above.
+
 A slightly different model from lmer, allowing the residual variances to vary according to the MenEx alleles. This latter model fit was also checked above with the glmmTMB fit.
 
-Not much variation in residual variation by allele (a bit of a surpise). Probably should check posterior distributions of CV by allele.
+Not much variation in sample level variation by allele (a bit of a surpise). 
 
 Does not change the results very much compared to the lme4, where the residual variance is shared across alleles.
 
 I am doing a large number of iterations because the effective sampling of the random effects is lower than I would like. 
 
+One thing of very small and pedantic note. I am not sure I really needed to fit the residual variances independently by allele. This is because the biological variation among individuals is actually handled in the `idh(MenEx):sample`, and the residuals is just assessing the technical variation among aliquots. The reason I decided to include it was in case there was some associated relationship between measurement error and how much activity in the MEN assay.   However, it does not change anything we actually care about biologically. In any case, I kept the terms in the model because there is lots of data and estimating these coefficients isn't going to cause any problems.
 
-**WARNING** you may wish to lower nitt to a much smaller number for a test (20K). I needed this large number for the random effects. It was run at 200K. 
+**WARNING** you may wish to lower nitt to a much smaller number for a test. I needed this large number for the random effects. It was run at 200K. 
 
 ```{r}
 mod1_MCMCglmm <- MCMCglmm(fixed = Men_Activity ~ 1 + MenEx,
@@ -572,7 +583,7 @@ G_cor
 
 
 
-Let's get the HPDintervals for the genetic correlations
+Let's get the HPD intervals for the genetic correlations
 ```{r}
 Gcor_12 <- mod1_MCMCglmm$VCV[,6]/sqrt(mod1_MCMCglmm$VCV[,5] * mod1_MCMCglmm$VCV[,9])
 mean(Gcor_12)
@@ -593,7 +604,7 @@ HPDinterval(Gcor_23)
 ### CV of residuals
 Let's compute the coefficient of variation for the residuals for each allele
 
-Please note that because of the experimental design "sample" not "units" is the appropriate level of biological variation for this.
+**Please note** that because of the experimental design "sample" not "units" is the appropriate level of biological variation for this.
 
 First a quick check
 ```{r}
@@ -603,7 +614,7 @@ CV_Men86_approx <- sqrt(0.695)/(14.17 - 4.67)
 ```
 
 
-Now for real
+Now for real:
 
 ```{r}
 posterior_MenEx3_residual_CV <- sqrt(mod1_MCMCglmm$VCV[,2])/mod1_MCMCglmm$Sol[,1]
