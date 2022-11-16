@@ -28,7 +28,7 @@ Authors: Teresa Z. Rzezniczak, Mark T. Rzezniczak, Bruce H. Reed, Ian Dworkin, T
 
 ### GWAS
 
-GWAS analysis was done in plink (see manuscript).
+GWAS analysis was done in plink (see manuscript). Plink code can be found in the file `PLINK_script.md` in the scripts folder.
 
 `script_qqman.R` contains the scripts used to create the Manhattan plot and QQ plots in the paper.
 
