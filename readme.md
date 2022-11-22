@@ -32,11 +32,14 @@ GWAS analysis was done in plink (see manuscript). Plink code can be found in the
 
 `script_qqman.R` contains the scripts used to create the Manhattan plot and QQ plots in the paper.
 
+The simulation for shared sites and genes across the two data sets is in `..\scripts\HowManySNPsInCommon.R`
+
 ### Quantitative Genetic analyses
 
 All other information on the Quantitative Genetic analysis is in the `TransvectionQG_ID.Rmd` script. All QG analysis stems from the dataset in `../data/transvection_rawdata.csv`
 
 ID made a small edit to the raw data, removing "NA" so it can be added in more easily in R.
+
 
 ## Misc folder
 
