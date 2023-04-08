@@ -1,6 +1,8 @@
 # data and scripts
 
-This repository contains the data and scripts to reproduce the results from Rzezniczak et al. (2022). Regulation at *Drosophila*’s Malic Enzyme highlights the complexity of transvection and its sensitivity to genetic background. In review.
+This repository contains the data and scripts to reproduce the results from:
+
+Rzezniczak et al. (2023). Regulation at *Drosophila*’s Malic Enzyme highlights the complexity of transvection and its sensitivity to genetic background. Genetics 223(2). https://doi.org/10.1093/genetics/iyac181
 
 Authors: Teresa Z. Rzezniczak, Mark T. Rzezniczak, Bruce H. Reed, Ian Dworkin, Thomas J.S. Merritt
 
